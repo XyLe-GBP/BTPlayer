@@ -1,0 +1,332 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <!-- 
+    Microsoft ResX Schema 
+    
+    Version 2.0
+    
+    The primary goals of this format is to allow a simple XML format 
+    that is mostly human readable. The generation and parsing of the 
+    various data types are done through the TypeConverter classes 
+    associated with the data types.
+    
+    Example:
+    
+    ... ado.net/XML headers & schema ...
+    <resheader name="resmimetype">text/microsoft-resx</resheader>
+    <resheader name="version">2.0</resheader>
+    <resheader name="reader">System.Resources.ResXResourceReader, System.Windows.Forms, ...</resheader>
+    <resheader name="writer">System.Resources.ResXResourceWriter, System.Windows.Forms, ...</resheader>
+    <data name="Name1"><value>this is my long string</value><comment>this is a comment</comment></data>
+    <data name="Color1" type="System.Drawing.Color, System.Drawing">Blue</data>
+    <data name="Bitmap1" mimetype="application/x-microsoft.net.object.binary.base64">
+        <value>[base64 mime encoded serialized .NET Framework object]</value>
+    </data>
+    <data name="Icon1" type="System.Drawing.Icon, System.Drawing" mimetype="application/x-microsoft.net.object.bytearray.base64">
+        <value>[base64 mime encoded string representing a byte array form of the .NET Framework object]</value>
+        <comment>This is a comment</comment>
+    </data>
+                
+    There are any number of "resheader" rows that contain simple 
+    name/value pairs.
+    
+    Each data row contains a name, and value. The row also contains a 
+    type or mimetype. Type corresponds to a .NET class that support 
+    text/value conversion through the TypeConverter architecture. 
+    Classes that don't support this are serialized and stored with the 
+    mimetype set.
+    
+    The mimetype is used for serialized objects, and tells the 
+    ResXResourceReader how to depersist the object. This is currently not 
+    extensible. For a given mimetype the value must be set accordingly:
+    
+    Note - application/x-microsoft.net.object.binary.base64 is the format 
+    that the ResXResourceWriter will generate, however the reader can 
+    read any of the formats listed below.
+    
+    mimetype: application/x-microsoft.net.object.binary.base64
+    value   : The object must be serialized with 
+            : System.Runtime.Serialization.Formatters.Binary.BinaryFormatter
+            : and then encoded with base64 encoding.
+    
+    mimetype: application/x-microsoft.net.object.soap.base64
+    value   : The object must be serialized with 
+            : System.Runtime.Serialization.Formatters.Soap.SoapFormatter
+            : and then encoded with base64 encoding.
+
+    mimetype: application/x-microsoft.net.object.bytearray.base64
+    value   : The object must be serialized into a byte array 
+            : using a System.ComponentModel.TypeConverter
+            : and then encoded with base64 encoding.
+    -->
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="AboutMenuCaption" xml:space="preserve">
+    <value>情報</value>
+  </data>
+  <data name="AddDeviceMenuCaption" xml:space="preserve">
+    <value>デバイスの追加</value>
+  </data>
+  <data name="AudioPlaybackConnectionError" xml:space="preserve">
+    <value>AudioPlaybackConnection を作成できませんでした。</value>
+  </data>
+  <data name="BluetoothAlreadyDeviceDelete" xml:space="preserve">
+    <value>接続中のデバイスは削除できません。先に Disconnect してください。</value>
+  </data>
+  <data name="BluetoothDeleteDevice" xml:space="preserve">
+    <value>削除するデバイスを選択してください。</value>
+  </data>
+  <data name="BluetoothDeviceDeleteConfirm" xml:space="preserve">
+    <value>{0} を削除しますか？</value>
+  </data>
+  <data name="BluetoothDeviceDeleteFailed" xml:space="preserve">
+    <value>デバイスの削除に失敗しました。
+{0}</value>
+  </data>
+  <data name="BluetoothDeviceDeleteFailedS" xml:space="preserve">
+    <value>デバイスの削除に失敗しました。
+Status: {0}</value>
+  </data>
+  <data name="BluetoothException" xml:space="preserve">
+    <value>Bluetooth 機能の確認に失敗しました。
+{0}
+アプリケーションを終了します。</value>
+  </data>
+  <data name="CancelledCaption" xml:space="preserve">
+    <value>処理が中断されました。</value>
+  </data>
+  <data name="ConnectCaption" xml:space="preserve">
+    <value>接続</value>
+  </data>
+  <data name="ConnectedNameCaption" xml:space="preserve">
+    <value>接続済み: {0}</value>
+  </data>
+  <data name="ConnectionConnectCaption" xml:space="preserve">
+    <value>接続済み</value>
+  </data>
+  <data name="ConnectionDisconectCaption" xml:space="preserve">
+    <value>切断済み</value>
+  </data>
+  <data name="ConnectionFailedCaption" xml:space="preserve">
+    <value>失敗</value>
+  </data>
+  <data name="ConnectionReadyCaption" xml:space="preserve">
+    <value>準備完了</value>
+  </data>
+  <data name="ConnectionUnknownCaption" xml:space="preserve">
+    <value>不明</value>
+  </data>
+  <data name="CurrentCaption" xml:space="preserve">
+    <value>現在のバージョン：</value>
+  </data>
+  <data name="DetectedCaption" xml:space="preserve">
+    <value>認識済み</value>
+  </data>
+  <data name="DeviceAlreadyConnectCaption" xml:space="preserve">
+    <value>すでに別のデバイスが接続済みです。先に切断してください。</value>
+  </data>
+  <data name="DeviceListCaption" xml:space="preserve">
+    <value>デバイスリスト</value>
+  </data>
+  <data name="DeviceName" xml:space="preserve">
+    <value>デバイス名</value>
+  </data>
+  <data name="DeviceNotConnectedCaption" xml:space="preserve">
+    <value>デバイスが接続されていないため、アプリケーションを開始できません。</value>
+  </data>
+  <data name="DeviceSelectionCaption" xml:space="preserve">
+    <value>デバイスを選択してください。</value>
+  </data>
+  <data name="DisconnectCaption" xml:space="preserve">
+    <value>切断</value>
+  </data>
+  <data name="DisconnectError" xml:space="preserve">
+    <value>切断に失敗しました。
+{0}</value>
+  </data>
+  <data name="DoneCaption" xml:space="preserve">
+    <value>完了</value>
+  </data>
+  <data name="DownloadAbortConfirmCaption" xml:space="preserve">
+    <value>現在ダウンロードが進行中です。ダウンロードを中止すると
+ダウンロードしたデータは失われます。本当に続行しますか？</value>
+  </data>
+  <data name="DownloadingCaption" xml:space="preserve">
+    <value>{1} KiB 中 {0} KiB をダウンロードしました。</value>
+  </data>
+  <data name="ErrorCaption" xml:space="preserve">
+    <value>エラー</value>
+  </data>
+  <data name="ErrorOccuredText" xml:space="preserve">
+    <value>エラーが発生しました。</value>
+  </data>
+  <data name="ExitCaption" xml:space="preserve">
+    <value>終了</value>
+  </data>
+  <data name="FirstConnectCaption" xml:space="preserve">
+    <value>先に接続を実行してください。</value>
+  </data>
+  <data name="FormDownloadingCaption" xml:space="preserve">
+    <value>ダウンロード中…</value>
+  </data>
+  <data name="InformationCaption" xml:space="preserve">
+    <value>情報</value>
+  </data>
+  <data name="InitializingText" xml:space="preserve">
+    <value>初期化中…</value>
+  </data>
+  <data name="LatestCaption" xml:space="preserve">
+    <value>最新バージョン：</value>
+  </data>
+  <data name="LogCaption" xml:space="preserve">
+    <value>ログ</value>
+  </data>
+  <data name="MSGBoxAbortedCaption" xml:space="preserve">
+    <value>中止</value>
+  </data>
+  <data name="MSGBoxConfirmCaption" xml:space="preserve">
+    <value>確認</value>
+  </data>
+  <data name="NetworkNotConnectedCaption" xml:space="preserve">
+    <value>インターネット接続がありません。</value>
+  </data>
+  <data name="NoNameCaption" xml:space="preserve">
+    <value>(名前がありません)</value>
+  </data>
+  <data name="NotBluetooth" xml:space="preserve">
+    <value>このPCには Bluetooth 機能が見つかりませんでした。
+アプリケーションを終了します。</value>
+  </data>
+  <data name="NotOpenBluetoothSettings" xml:space="preserve">
+    <value>Bluetooth 設定画面を開けませんでした。
+{0}</value>
+  </data>
+  <data name="OpenAsyncError" xml:space="preserve">
+    <value>OpenAsync に失敗しました。
+{0}</value>
+  </data>
+  <data name="OpenCaption" xml:space="preserve">
+    <value>開く</value>
+  </data>
+  <data name="OpenFailedCaption" xml:space="preserve">
+    <value>開放失敗</value>
+  </data>
+  <data name="ProcessingText" xml:space="preserve">
+    <value>処理中…</value>
+  </data>
+  <data name="ProcessUnknownText" xml:space="preserve">
+    <value>処理タイプが不明です。数秒後にダイアログを閉じます。</value>
+  </data>
+  <data name="ProgressText" xml:space="preserve">
+    <value>{1} ファイル中 {0} ファイルの処理が完了しました。</value>
+  </data>
+  <data name="RefreshDeviceCaption" xml:space="preserve">
+    <value>リストの更新</value>
+  </data>
+  <data name="RemoveDiviceMenuCaption" xml:space="preserve">
+    <value>デバイスの削除</value>
+  </data>
+  <data name="SelectedNameCaption" xml:space="preserve">
+    <value>選択済み: {0}</value>
+  </data>
+  <data name="ShowCaption" xml:space="preserve">
+    <value>表示</value>
+  </data>
+  <data name="SiteOpenCaption" xml:space="preserve">
+    <value>アプリケーションのアップデートが可能です。
+GitHubのサイトを開きますか？</value>
+  </data>
+  <data name="StartAsyncError" xml:space="preserve">
+    <value>StartAsync に失敗しました。
+{0}</value>
+  </data>
+  <data name="StateCaption" xml:space="preserve">
+    <value>状態</value>
+  </data>
+  <data name="StatusCaption" xml:space="preserve">
+    <value>状態: {0}</value>
+  </data>
+  <data name="TasktrayMinimized" xml:space="preserve">
+    <value>タスクトレイに常駐しました。</value>
+  </data>
+  <data name="TasktrayMinimizedwConnected" xml:space="preserve">
+    <value>タスクトレイに常駐しました。
+接続中: {0}</value>
+  </data>
+  <data name="UnExpectedErrorCaption" xml:space="preserve">
+    <value>エラーが発生しました。
+{0}</value>
+  </data>
+  <data name="UpdateCompletedCaption" xml:space="preserve">
+    <value>アップデートが完了しました。</value>
+  </data>
+  <data name="UpdateConfirmCaption" xml:space="preserve">
+    <value>アプリケーションのアップデートが可能です。
+アップデートを行いますか？</value>
+  </data>
+  <data name="UpdateMenuCaption" xml:space="preserve">
+    <value>アップデート</value>
+  </data>
+  <data name="UptodateCaption" xml:space="preserve">
+    <value>最新バージョンのアプリケーションをお使いです。</value>
+  </data>
+  <data name="WarningCaption" xml:space="preserve">
+    <value>警告</value>
+  </data>
+</root>
