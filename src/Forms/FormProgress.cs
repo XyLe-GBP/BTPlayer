@@ -122,7 +122,7 @@ namespace BTPlayer
                     break;
                 case true: // portable
                     {
-                        downloadClient.DownloadFileAsync(uri, Directory.GetCurrentDirectory() + @"\res\mca-coh-gui.zip");
+                        downloadClient.DownloadFileAsync(uri, Directory.GetCurrentDirectory() + @"\res\btplayer.zip");
                     }
                     break;
             }
