@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Net.NetworkInformation;
+using System.Threading;
 using System.Windows;
 using Windows.Devices.Enumeration;
 using Windows.Devices.Radios;
@@ -26,15 +27,20 @@ namespace BTPlayer
         #endregion
 
         private const string SettingsFileName = "last_device.txt";
+        private const string AppSettingsFileName = "settings.txt";
+        private const int ClosedStateGracePeriodMs = 8000;
 
         private DeviceWatcher? deviceWatcher;
         private readonly Dictionary<string, DeviceInformation> devices = new();
         private readonly Dictionary<string, AudioPlaybackConnection> audioPlaybackConnections = new();
+        private readonly Dictionary<string, CancellationTokenSource> pendingCloseConfirmations = new();
+        private readonly SemaphoreSlim audioConnectionLock = new(1, 1);
 
         private string? currentOpenedDeviceId;
         private string? lastSelectedDeviceId;
         private string? pendingRestoreDeviceId;
         private bool suppressSelectionPersistence;
+        private bool autoPlayOnDeviceConnected;
 
         private NotifyIcon? trayIcon;
         private ContextMenuStrip? trayMenu;
@@ -99,6 +105,7 @@ namespace BTPlayer
             InitializeDeviceGrid();
             InitializeTrayIcon();
             LoadLastSelectedDevice();
+            LoadAppSettings();
 
             SetConnectionState(Localization.ConnectionDisconectCaption);
             Log("Application started.");
@@ -106,6 +113,7 @@ namespace BTPlayer
             toolStripButton_Add.Text = Localization.AddDeviceMenuCaption;
             toolStripButton_Remove.Text = Localization.RemoveDiviceMenuCaption;
             toolStripButton_Refresh.Text = Localization.RefreshDeviceCaption;
+            toolStripButton_Settings.Text = GetUiText("Settings", "設定");
             toolStripButton_Update.Text = Localization.UpdateMenuCaption;
             toolStripButton_About.Text = Localization.AboutMenuCaption;
             toolStripButton_Exit.Text = Localization.ExitCaption;
@@ -140,6 +148,14 @@ namespace BTPlayer
             }
 
             StopDeviceWatcher(false);
+
+            foreach (var closeConfirmation in pendingCloseConfirmations.Values)
+            {
+                closeConfirmation.Cancel();
+                closeConfirmation.Dispose();
+            }
+
+            pendingCloseConfirmations.Clear();
 
             foreach (var pair in audioPlaybackConnections)
             {
@@ -976,6 +992,23 @@ namespace BTPlayer
             return Path.Combine(dir, SettingsFileName);
         }
 
+        private static string GetAppSettingsFilePath()
+        {
+            string dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "BTPlayer");
+
+            Directory.CreateDirectory(dir);
+            return Path.Combine(dir, AppSettingsFileName);
+        }
+
+        private static string GetUiText(string english, string japanese)
+        {
+            return Thread.CurrentThread.CurrentUICulture.TwoLetterISOLanguageName.Equals("ja", StringComparison.OrdinalIgnoreCase)
+                ? japanese
+                : english;
+        }
+
         private string GetCurrentConnectedDeviceName()
         {
             if (!string.IsNullOrWhiteSpace(currentOpenedDeviceId) &&
@@ -1063,19 +1096,71 @@ namespace BTPlayer
                 return;
             }
 
-            // すでに別のデバイスが Connect 済みなら拒否
-            if (audioPlaybackConnections.Count > 0 && !audioPlaybackConnections.ContainsKey(selectedDeviceId))
+            await audioConnectionLock.WaitAsync();
+            try
             {
-                MessageBox.Show(Localization.DeviceAlreadyConnectCaption);
-                Log("Connect blocked: another device is already connected.");
-                return;
-            }
+                // すでに別のデバイスが Connect 済みなら拒否
+                if (audioPlaybackConnections.Count > 0 && !audioPlaybackConnections.ContainsKey(selectedDeviceId))
+                {
+                    MessageBox.Show(Localization.DeviceAlreadyConnectCaption);
+                    Log("Connect blocked: another device is already connected.");
+                    return;
+                }
 
-            if (audioPlaybackConnections.ContainsKey(selectedDeviceId))
-            {
-                SetConnectionState(Localization.ConnectionReadyCaption);
-                SetDeviceRowState(selectedDeviceId, Localization.ConnectionReadyCaption);
-                Log("Already connected: " + GetDeviceDisplayName(selectedDeviceId));
+                if (audioPlaybackConnections.ContainsKey(selectedDeviceId))
+                {
+                    SetConnectionState(Localization.ConnectionReadyCaption);
+                    SetDeviceRowState(selectedDeviceId, Localization.ConnectionReadyCaption);
+                    Log("Already connected: " + GetDeviceDisplayName(selectedDeviceId));
+
+                    UpdateOpenButtonState();
+                    UpdateConnectButtonState();
+                    UpdateTrayMenuState();
+                    RefreshDeviceRowAppearance();
+                    UpdateTrayTooltip();
+                    UpdateActionButtonStyle();
+                    return;
+                }
+
+                var playbackConnection = AudioPlaybackConnection.TryCreateFromId(selectedDeviceId);
+                if (playbackConnection == null)
+                {
+                    MessageBox.Show(Localization.AudioPlaybackConnectionError);
+                    Log("TryCreateFromId failed.");
+                    return;
+                }
+
+                playbackConnection.StateChanged += AudioPlaybackConnection_ConnectionStateChanged;
+                audioPlaybackConnections[selectedDeviceId] = playbackConnection;
+
+                try
+                {
+                    PauseDeviceWatcherForAudioConnection();
+                    Log("Connecting: " + GetDeviceDisplayName(selectedDeviceId));
+                    await playbackConnection.StartAsync();
+
+                    SetConnectionState(Localization.ConnectionReadyCaption);
+                    SetDeviceRowState(selectedDeviceId, Localization.ConnectionReadyCaption);
+                    ResetInactiveFailureStates();
+                    Log("Connect succeeded: " + GetDeviceDisplayName(selectedDeviceId));
+
+                    if (autoPlayOnDeviceConnected)
+                    {
+                        await OpenConnectedDeviceAsync(selectedDeviceId, playbackConnection, showErrorMessage: false);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    playbackConnection.StateChanged -= AudioPlaybackConnection_ConnectionStateChanged;
+                    playbackConnection.Dispose();
+                    audioPlaybackConnections.Remove(selectedDeviceId);
+
+                    SetConnectionState(Localization.ConnectionDisconectCaption);
+                    SetDeviceRowState(selectedDeviceId, Localization.ErrorCaption);
+                    Log("Connect failed: " + ex.Message);
+                    MessageBox.Show(string.Format(Localization.StartAsyncError, ex.Message));
+                    ResumeDeviceWatcherIfIdle();
+                }
 
                 UpdateOpenButtonState();
                 UpdateConnectButtonState();
@@ -1083,48 +1168,68 @@ namespace BTPlayer
                 RefreshDeviceRowAppearance();
                 UpdateTrayTooltip();
                 UpdateActionButtonStyle();
-                return;
             }
-
-            var playbackConnection = AudioPlaybackConnection.TryCreateFromId(selectedDeviceId);
-            if (playbackConnection == null)
+            finally
             {
-                MessageBox.Show(Localization.AudioPlaybackConnectionError);
-                Log("TryCreateFromId failed.");
-                return;
+                audioConnectionLock.Release();
             }
+        }
 
-            playbackConnection.StateChanged += AudioPlaybackConnection_ConnectionStateChanged;
-            audioPlaybackConnections[selectedDeviceId] = playbackConnection;
-
+        private void LoadAppSettings()
+        {
             try
             {
-                Log("Connecting: " + GetDeviceDisplayName(selectedDeviceId));
-                await playbackConnection.StartAsync();
+                string path = GetAppSettingsFilePath();
+                if (!File.Exists(path))
+                {
+                    return;
+                }
 
-                SetConnectionState(Localization.ConnectionReadyCaption);
-                SetDeviceRowState(selectedDeviceId, Localization.ConnectionReadyCaption);
-                ResetInactiveFailureStates();
-                Log("Connect succeeded: " + GetDeviceDisplayName(selectedDeviceId));
+                foreach (string line in File.ReadAllLines(path))
+                {
+                    string trimmedLine = line.Trim();
+                    if (trimmedLine.Length == 0 || trimmedLine.StartsWith("#", StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    int separatorIndex = trimmedLine.IndexOf('=');
+                    if (separatorIndex <= 0)
+                    {
+                        continue;
+                    }
+
+                    string key = trimmedLine[..separatorIndex].Trim();
+                    string value = trimmedLine[(separatorIndex + 1)..].Trim();
+
+                    if (key.Equals("AutoPlayOnDeviceConnected", StringComparison.OrdinalIgnoreCase) &&
+                        bool.TryParse(value, out bool parsedValue))
+                    {
+                        autoPlayOnDeviceConnected = parsedValue;
+                    }
+                }
+
+                Log("Loaded app settings.");
             }
             catch (Exception ex)
             {
-                playbackConnection.StateChanged -= AudioPlaybackConnection_ConnectionStateChanged;
-                playbackConnection.Dispose();
-                audioPlaybackConnections.Remove(selectedDeviceId);
-
-                SetConnectionState(Localization.ConnectionDisconectCaption);
-                SetDeviceRowState(selectedDeviceId, Localization.ErrorCaption);
-                Log("Connect failed: " + ex.Message);
-                MessageBox.Show(string.Format(Localization.StartAsyncError, ex.Message));
+                Log("Failed to load app settings: " + ex.Message);
             }
+        }
 
-            UpdateOpenButtonState();
-            UpdateConnectButtonState();
-            UpdateTrayMenuState();
-            RefreshDeviceRowAppearance();
-            UpdateTrayTooltip();
-            UpdateActionButtonStyle();
+        private void SaveAppSettings()
+        {
+            try
+            {
+                string settingsText =
+                    "AutoPlayOnDeviceConnected=" + autoPlayOnDeviceConnected + Environment.NewLine;
+
+                File.WriteAllText(GetAppSettingsFilePath(), settingsText);
+            }
+            catch (Exception ex)
+            {
+                Log("Failed to save app settings: " + ex.Message);
+            }
         }
 
         private void ClearOtherConnectedStates(string keepDeviceId)
@@ -1162,27 +1267,14 @@ namespace BTPlayer
             }
         }
 
-        /// <summary>
-        /// デバイスオープン
-        /// </summary>
-        /// <returns>なし</returns>
-        private async Task OpenSelectedDeviceAsync()
+        private async Task OpenConnectedDeviceAsync(
+            string selectedDeviceId,
+            AudioPlaybackConnection selectedConnection,
+            bool showErrorMessage)
         {
-            var selectedDeviceId = GetSelectedDeviceId();
-            if (selectedDeviceId == null)
-            {
-                MessageBox.Show(Localization.DeviceSelectionCaption);
-                return;
-            }
-
-            if (!audioPlaybackConnections.TryGetValue(selectedDeviceId, out var selectedConnection))
-            {
-                MessageBox.Show(Localization.FirstConnectCaption);
-                return;
-            }
-
             try
             {
+                PauseDeviceWatcherForAudioConnection();
                 Log("Opening: " + GetDeviceDisplayName(selectedDeviceId));
                 var result = await selectedConnection.OpenAsync();
 
@@ -1202,6 +1294,7 @@ namespace BTPlayer
                     Log("Open failed: " + result.Status);
 
                     // 失敗した接続は残さず破棄
+                    CancelPendingCloseConfirmation(selectedDeviceId);
                     selectedConnection.StateChanged -= AudioPlaybackConnection_ConnectionStateChanged;
                     selectedConnection.Dispose();
                     audioPlaybackConnections.Remove(selectedDeviceId);
@@ -1213,12 +1306,14 @@ namespace BTPlayer
 
                     SetConnectionState(Localization.OpenFailedCaption + ": " + result.Status);
                     SetDeviceRowState(selectedDeviceId, Localization.OpenFailedCaption);
+                    ResumeDeviceWatcherIfIdle();
                 }
             }
             catch (Exception ex)
             {
                 try
                 {
+                    CancelPendingCloseConfirmation(selectedDeviceId);
                     selectedConnection.StateChanged -= AudioPlaybackConnection_ConnectionStateChanged;
                     selectedConnection.Dispose();
                     audioPlaybackConnections.Remove(selectedDeviceId);
@@ -1235,15 +1330,51 @@ namespace BTPlayer
                 SetConnectionState(Localization.ConnectionDisconectCaption);
                 SetDeviceRowState(selectedDeviceId, Localization.ErrorCaption);
                 Log("Open failed: " + ex.Message);
-                MessageBox.Show(string.Format(Localization.OpenAsyncError, ex.Message));
+
+                if (showErrorMessage)
+                {
+                    MessageBox.Show(string.Format(Localization.OpenAsyncError, ex.Message));
+                }
+
+                ResumeDeviceWatcherIfIdle();
+            }
+        }
+
+        /// <summary>
+        /// デバイスオープン
+        /// </summary>
+        /// <returns>なし</returns>
+        private async Task OpenSelectedDeviceAsync()
+        {
+            var selectedDeviceId = GetSelectedDeviceId();
+            if (selectedDeviceId == null)
+            {
+                MessageBox.Show(Localization.DeviceSelectionCaption);
+                return;
             }
 
-            UpdateOpenButtonState();
-            UpdateConnectButtonState();
-            UpdateTrayMenuState();
-            RefreshDeviceRowAppearance();
-            UpdateTrayTooltip();
-            UpdateActionButtonStyle();
+            await audioConnectionLock.WaitAsync();
+            try
+            {
+                if (!audioPlaybackConnections.TryGetValue(selectedDeviceId, out var selectedConnection))
+                {
+                    MessageBox.Show(Localization.FirstConnectCaption);
+                    return;
+                }
+
+                await OpenConnectedDeviceAsync(selectedDeviceId, selectedConnection, showErrorMessage: true);
+
+                UpdateOpenButtonState();
+                UpdateConnectButtonState();
+                UpdateTrayMenuState();
+                RefreshDeviceRowAppearance();
+                UpdateTrayTooltip();
+                UpdateActionButtonStyle();
+            }
+            finally
+            {
+                audioConnectionLock.Release();
+            }
         }
 
         private async Task DisconnectSelectedDeviceAsync()
@@ -1255,10 +1386,48 @@ namespace BTPlayer
                 return;
             }
 
-            if (!audioPlaybackConnections.TryGetValue(selectedDeviceId, out var selectedConnection))
+            await audioConnectionLock.WaitAsync();
+            try
             {
-                SetConnectionState(Localization.ConnectionDisconectCaption);
-                SetDeviceRowState(selectedDeviceId, Localization.ConnectionDisconectCaption);
+                if (!audioPlaybackConnections.TryGetValue(selectedDeviceId, out var selectedConnection))
+                {
+                    SetConnectionState(Localization.ConnectionDisconectCaption);
+                    SetDeviceRowState(selectedDeviceId, Localization.ConnectionDisconectCaption);
+
+                    UpdateOpenButtonState();
+                    UpdateConnectButtonState();
+                    UpdateTrayMenuState();
+                    RefreshDeviceRowAppearance();
+                    UpdateTrayTooltip();
+                    UpdateActionButtonStyle();
+                    return;
+                }
+
+                try
+                {
+                    Log("Disconnecting: " + GetDeviceDisplayName(selectedDeviceId));
+
+                    CancelPendingCloseConfirmation(selectedDeviceId);
+                    selectedConnection.StateChanged -= AudioPlaybackConnection_ConnectionStateChanged;
+                    selectedConnection.Dispose();
+                    audioPlaybackConnections.Remove(selectedDeviceId);
+
+                    if (currentOpenedDeviceId == selectedDeviceId)
+                    {
+                        currentOpenedDeviceId = null;
+                    }
+
+                    SetConnectionState(Localization.ConnectionDisconectCaption);
+                    SetDeviceRowState(selectedDeviceId, Localization.ConnectionDisconectCaption);
+                    Log("Disconnect succeeded: " + GetDeviceDisplayName(selectedDeviceId));
+                }
+                catch (Exception ex)
+                {
+                    SetConnectionState(Localization.ErrorCaption);
+                    SetDeviceRowState(selectedDeviceId, Localization.ErrorCaption);
+                    Log("Disconnect failed: " + ex.Message);
+                    MessageBox.Show(string.Format(Localization.DisconnectError, ex.Message));
+                }
 
                 UpdateOpenButtonState();
                 UpdateConnectButtonState();
@@ -1266,42 +1435,14 @@ namespace BTPlayer
                 RefreshDeviceRowAppearance();
                 UpdateTrayTooltip();
                 UpdateActionButtonStyle();
-                return;
-            }
+                ResumeDeviceWatcherIfIdle();
 
-            try
+                await Task.CompletedTask;
+            }
+            finally
             {
-                Log("Disconnecting: " + GetDeviceDisplayName(selectedDeviceId));
-
-                selectedConnection.StateChanged -= AudioPlaybackConnection_ConnectionStateChanged;
-                selectedConnection.Dispose();
-                audioPlaybackConnections.Remove(selectedDeviceId);
-
-                if (currentOpenedDeviceId == selectedDeviceId)
-                {
-                    currentOpenedDeviceId = null;
-                }
-
-                SetConnectionState(Localization.ConnectionDisconectCaption);
-                SetDeviceRowState(selectedDeviceId, Localization.ConnectionDisconectCaption);
-                Log("Disconnect succeeded: " + GetDeviceDisplayName(selectedDeviceId));
+                audioConnectionLock.Release();
             }
-            catch (Exception ex)
-            {
-                SetConnectionState(Localization.ErrorCaption);
-                SetDeviceRowState(selectedDeviceId, Localization.ErrorCaption);
-                Log("Disconnect failed: " + ex.Message);
-                MessageBox.Show(string.Format(Localization.DisconnectError, ex.Message));
-            }
-
-            UpdateOpenButtonState();
-            UpdateConnectButtonState();
-            UpdateTrayMenuState();
-            RefreshDeviceRowAppearance();
-            UpdateTrayTooltip();
-            UpdateActionButtonStyle();
-
-            await Task.CompletedTask;
         }
 
         private void DeviceWatcher_Added(DeviceWatcher sender, DeviceInformation deviceInfo)
@@ -1398,6 +1539,13 @@ namespace BTPlayer
                 return;
             }
 
+            if (audioPlaybackConnections.ContainsKey(update.Id) ||
+                currentOpenedDeviceId == update.Id)
+            {
+                Log("Active audio device removal reported by watcher; keeping playback connection.");
+                return;
+            }
+
             devices.Remove(update.Id);
 
             DataGridViewRow? removeRow = null;
@@ -1467,6 +1615,7 @@ namespace BTPlayer
             {
                 if (matchedDeviceId != null)
                 {
+                    CancelPendingCloseConfirmation(matchedDeviceId);
                     ClearOtherConnectedStates(matchedDeviceId);
 
                     currentOpenedDeviceId = matchedDeviceId;
@@ -1480,17 +1629,13 @@ namespace BTPlayer
             {
                 if (matchedDeviceId != null)
                 {
-                    SetDeviceRowState(matchedDeviceId, Localization.ConnectionDisconectCaption);
-
-                    if (currentOpenedDeviceId == matchedDeviceId)
-                    {
-                        currentOpenedDeviceId = null;
-                    }
-
-                    Log("State changed: Disconnected - " + GetDeviceDisplayName(matchedDeviceId));
+                    ScheduleCloseConfirmation(sender, matchedDeviceId);
+                    Log("State changed: Closed pending confirmation - " + GetDeviceDisplayName(matchedDeviceId));
                 }
-
-                SetConnectionState(Localization.ConnectionDisconectCaption);
+                else
+                {
+                    SetConnectionState(Localization.ConnectionUnknownCaption);
+                }
             }
             else
             {
@@ -1509,6 +1654,104 @@ namespace BTPlayer
             RefreshDeviceRowAppearance();
             UpdateTrayTooltip();
             UpdateActionButtonStyle();
+            ResumeDeviceWatcherIfIdle();
+        }
+
+        private void ScheduleCloseConfirmation(AudioPlaybackConnection connection, string deviceId)
+        {
+            CancelPendingCloseConfirmation(deviceId);
+
+            var cancellation = new CancellationTokenSource();
+            pendingCloseConfirmations[deviceId] = cancellation;
+            _ = ConfirmClosedStateAfterDelayAsync(connection, deviceId, cancellation);
+        }
+
+        private async Task ConfirmClosedStateAfterDelayAsync(
+            AudioPlaybackConnection connection,
+            string deviceId,
+            CancellationTokenSource cancellation)
+        {
+            try
+            {
+                await Task.Delay(ClosedStateGracePeriodMs, cancellation.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            if (IsDisposed)
+            {
+                cancellation.Dispose();
+                return;
+            }
+
+            if (InvokeRequired)
+            {
+                BeginInvoke(new Action(() => ConfirmClosedState(connection, deviceId, cancellation)));
+                return;
+            }
+
+            ConfirmClosedState(connection, deviceId, cancellation);
+        }
+
+        private void ConfirmClosedState(
+            AudioPlaybackConnection connection,
+            string deviceId,
+            CancellationTokenSource cancellation)
+        {
+            if (!pendingCloseConfirmations.TryGetValue(deviceId, out var currentCancellation) ||
+                !ReferenceEquals(currentCancellation, cancellation))
+            {
+                cancellation.Dispose();
+                return;
+            }
+
+            pendingCloseConfirmations.Remove(deviceId);
+            cancellation.Dispose();
+
+            if (!audioPlaybackConnections.TryGetValue(deviceId, out var currentConnection) ||
+                !ReferenceEquals(currentConnection, connection))
+            {
+                return;
+            }
+
+            if (connection.State != AudioPlaybackConnectionState.Closed)
+            {
+                return;
+            }
+
+            connection.StateChanged -= AudioPlaybackConnection_ConnectionStateChanged;
+            audioPlaybackConnections.Remove(deviceId);
+            connection.Dispose();
+
+            if (currentOpenedDeviceId == deviceId)
+            {
+                currentOpenedDeviceId = null;
+            }
+
+            SetDeviceRowState(deviceId, Localization.ConnectionDisconectCaption);
+            SetConnectionState(Localization.ConnectionDisconectCaption);
+            Log("State changed: Disconnected - " + GetDeviceDisplayName(deviceId));
+
+            UpdateOpenButtonState();
+            UpdateConnectButtonState();
+            UpdateTrayMenuState();
+            RefreshDeviceRowAppearance();
+            UpdateTrayTooltip();
+            UpdateActionButtonStyle();
+            ResumeDeviceWatcherIfIdle();
+        }
+
+        private void CancelPendingCloseConfirmation(string deviceId)
+        {
+            if (!pendingCloseConfirmations.Remove(deviceId, out var cancellation))
+            {
+                return;
+            }
+
+            cancellation.Cancel();
+            cancellation.Dispose();
         }
 
         /// <summary>
@@ -1531,6 +1774,12 @@ namespace BTPlayer
         /// </summary>
         private void StartDeviceWatcher()
         {
+            if (audioPlaybackConnections.Count > 0)
+            {
+                Log("Device watcher start skipped during audio connection.");
+                return;
+            }
+
             StopDeviceWatcher(clearList: true);
 
             deviceWatcher = DeviceInformation.CreateWatcher(AudioPlaybackConnection.GetDeviceSelector());
@@ -1568,6 +1817,28 @@ namespace BTPlayer
             }
         }
 
+        private void PauseDeviceWatcherForAudioConnection()
+        {
+            if (deviceWatcher == null)
+            {
+                return;
+            }
+
+            StopDeviceWatcher(clearList: false);
+            Log("Device watcher paused during audio connection.");
+        }
+
+        private void ResumeDeviceWatcherIfIdle()
+        {
+            if (audioPlaybackConnections.Count > 0 || deviceWatcher != null || IsDisposed)
+            {
+                return;
+            }
+
+            StartDeviceWatcher();
+            Log("Device watcher resumed.");
+        }
+
         /// <summary>
         /// デバイスリストの更新
         /// </summary>
@@ -1576,6 +1847,14 @@ namespace BTPlayer
             if (InvokeRequired)
             {
                 BeginInvoke(new Action(RefreshDeviceList));
+                return;
+            }
+
+            if (audioPlaybackConnections.Count > 0)
+            {
+                Log("Refresh skipped during audio connection.");
+                EnsureDeviceSelection();
+                UpdateUiFromSelection();
                 return;
             }
 
@@ -1740,6 +2019,19 @@ namespace BTPlayer
         private void RefleshToolStripMenuItem_Click(object sender, EventArgs e)
         {
             RefreshDeviceList();
+        }
+
+        private void ToolStripButton_Settings_Click(object sender, EventArgs e)
+        {
+            using var settingsForm = new FormSettings(autoPlayOnDeviceConnected);
+            if (settingsForm.ShowDialog(this) != DialogResult.OK)
+            {
+                return;
+            }
+
+            autoPlayOnDeviceConnected = settingsForm.AutoPlayOnDeviceConnected;
+            SaveAppSettings();
+            Log("Settings saved. Auto open: " + autoPlayOnDeviceConnected);
         }
 
         private void ToolStripButton_About_Click(object sender, EventArgs e)

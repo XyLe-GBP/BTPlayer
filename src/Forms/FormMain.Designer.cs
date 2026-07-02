@@ -23,6 +23,7 @@
             toolStripButton_Add = new ToolStripButton();
             toolStripButton_Remove = new ToolStripButton();
             toolStripButton_Refresh = new ToolStripButton();
+            toolStripButton_Settings = new ToolStripButton();
             toolStripSeparator1 = new ToolStripSeparator();
             toolStripButton_Exit = new ToolStripButton();
             toolStripButton_About = new ToolStripButton();
@@ -55,7 +56,7 @@
             toolStrip_Main.BackColor = Color.White;
             toolStrip_Main.GripStyle = ToolStripGripStyle.Hidden;
             toolStrip_Main.ImageScalingSize = new Size(20, 20);
-            toolStrip_Main.Items.AddRange(new ToolStripItem[] { toolStripButton_Add, toolStripButton_Remove, toolStripButton_Refresh, toolStripSeparator1, toolStripButton_Exit, toolStripButton_About, toolStripSeparator2, toolStripButton_Update });
+            toolStrip_Main.Items.AddRange(new ToolStripItem[] { toolStripButton_Add, toolStripButton_Remove, toolStripButton_Refresh, toolStripButton_Settings, toolStripSeparator1, toolStripButton_Exit, toolStripButton_About, toolStripSeparator2, toolStripButton_Update });
             toolStrip_Main.Location = new Point(0, 0);
             toolStrip_Main.Name = "toolStrip_Main";
             toolStrip_Main.Padding = new Padding(12, 6, 12, 6);
@@ -88,6 +89,15 @@
             toolStripButton_Refresh.Size = new Size(50, 20);
             toolStripButton_Refresh.Text = "Refresh";
             toolStripButton_Refresh.Click += RefleshToolStripMenuItem_Click;
+            // 
+            // toolStripButton_Settings
+            // 
+            toolStripButton_Settings.DisplayStyle = ToolStripItemDisplayStyle.Text;
+            toolStripButton_Settings.Font = new Font("Yu Gothic UI", 9F, FontStyle.Bold, GraphicsUnit.Point, 128);
+            toolStripButton_Settings.Name = "toolStripButton_Settings";
+            toolStripButton_Settings.Size = new Size(53, 20);
+            toolStripButton_Settings.Text = "Settings";
+            toolStripButton_Settings.Click += ToolStripButton_Settings_Click;
             // 
             // toolStripSeparator1
             // 
@@ -345,6 +355,7 @@
         private ToolStripButton toolStripButton_Add;
         private ToolStripButton toolStripButton_Remove;
         private ToolStripButton toolStripButton_Refresh;
+        private ToolStripButton toolStripButton_Settings;
         private ToolStripSeparator toolStripSeparator1;
         private ToolStripButton toolStripButton_Exit;
         private ToolStripButton toolStripButton_About;
