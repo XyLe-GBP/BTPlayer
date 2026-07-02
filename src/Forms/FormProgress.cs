@@ -103,12 +103,12 @@ namespace BTPlayer
             {
                 case false:
                     {
-                        uri = new("https://github.com/XyLe-GBP/btplayer/releases/download/v" + GitHubLatestVersion + "/btplayer-release.zip");
+                        uri = new("https://github.com/XyLe-GBP/btplayer/releases/download/" + GitHubLatestVersion + "/btplayer-release.zip");
                     }
                     break;
                 case true:
                     {
-                        uri = new("https://github.com/XyLe-GBP/btplayer/releases/download/v" + GitHubLatestVersion + "/btplayer-portable.zip");
+                        uri = new("https://github.com/XyLe-GBP/btplayer/releases/download/" + GitHubLatestVersion + "/btplayer-portable.zip");
                     }
                     break;
             }
