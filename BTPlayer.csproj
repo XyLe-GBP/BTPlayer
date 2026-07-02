@@ -9,8 +9,8 @@
     <ApplicationIcon>Properties\BTPlayer.ico</ApplicationIcon>
     <UseWPF>True</UseWPF>
     <PackageIcon>BTPlayer_icon.png</PackageIcon>
-    <AssemblyVersion>1.0.2620.507</AssemblyVersion>
-    <FileVersion>1.0.2620.507</FileVersion>
+    <AssemblyVersion>1.1.2620.703</AssemblyVersion>
+    <FileVersion>1.1.2620.703</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>
