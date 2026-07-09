@@ -14,23 +14,17 @@ namespace BTPlayer
     {
         public static CancellationTokenSource cts = null!;
 
-        internal static CancellationTokenSource? cancel;
         internal static int ProgressType = 0;　// 処理タイプ
-        internal static int ProcessFlag = -1;
         internal static int ProgressMax;
-        internal static int Count;
         internal static bool Result = false;
-
-        /// <summary>
-        /// ダウンロード機能用変数
-        /// </summary>
-        public static System.Net.WebClient downloadClient = null!;
-        public static bool IsDownloading = false;
-        public static string DownloadedStatus = "";
-        public static int DownloadProgress = 0;
 
         public static bool ApplicationPortable = false;
         public static string? GitHubLatestVersion;
+
+        internal readonly record struct DownloadProgressInfo(
+            int ProgressPercentage,
+            long BytesReceived,
+            long? TotalBytesToReceive);
 
         public class Utils
         {
@@ -138,6 +132,71 @@ namespace BTPlayer
             {
                 using Stream stream = await GetWebStreamAsync(httpClient, uri);
                 return Image.FromStream(stream);
+            }
+
+            public static async Task DownloadFileWithProgressAsync(
+                HttpClient httpClient,
+                Uri uri,
+                string destinationFilePath,
+                IProgress<DownloadProgressInfo>? progress,
+                CancellationToken cancellationToken)
+            {
+                ArgumentNullException.ThrowIfNull(httpClient);
+                ArgumentNullException.ThrowIfNull(uri);
+                ArgumentException.ThrowIfNullOrWhiteSpace(destinationFilePath);
+
+                string? destinationDirectory = Path.GetDirectoryName(destinationFilePath);
+                if (!string.IsNullOrWhiteSpace(destinationDirectory))
+                {
+                    Directory.CreateDirectory(destinationDirectory);
+                }
+
+                using HttpResponseMessage response = await httpClient.GetAsync(
+                    uri,
+                    HttpCompletionOption.ResponseHeadersRead,
+                    cancellationToken);
+
+                response.EnsureSuccessStatusCode();
+
+                long? totalBytes = response.Content.Headers.ContentLength;
+                await using Stream sourceStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+                await using FileStream destinationStream = new(
+                    destinationFilePath,
+                    FileMode.Create,
+                    FileAccess.Write,
+                    FileShare.None,
+                    bufferSize: 81920,
+                    useAsync: true);
+
+                byte[] buffer = new byte[81920];
+                long totalRead = 0;
+                int lastProgressPercentage = -1;
+
+                progress?.Report(new DownloadProgressInfo(0, 0, totalBytes));
+
+                while (true)
+                {
+                    int read = await sourceStream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
+                    if (read == 0)
+                    {
+                        break;
+                    }
+
+                    await destinationStream.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+                    totalRead += read;
+
+                    int progressPercentage = totalBytes > 0
+                        ? Math.Clamp((int)Math.Round(totalRead * 100d / totalBytes.Value), 0, 100)
+                        : 0;
+
+                    if (progressPercentage != lastProgressPercentage)
+                    {
+                        lastProgressPercentage = progressPercentage;
+                        progress?.Report(new DownloadProgressInfo(progressPercentage, totalRead, totalBytes));
+                    }
+                }
+
+                progress?.Report(new DownloadProgressInfo(100, totalRead, totalBytes));
             }
         }
     }

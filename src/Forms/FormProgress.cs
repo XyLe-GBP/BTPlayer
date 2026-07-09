@@ -1,180 +1,148 @@
-﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
-using System.Drawing;
 using System.IO;
-using System.Text;
-using System.Windows;
-using System.Windows.Forms;
+using System.Net.Http;
 using static BTPlayer.Common;
-using BTPlayer.Localizations;
 using Localization = BTPlayer.Localizations.Localization;
 
 namespace BTPlayer
 {
     public partial class FormProgress : Form
     {
+        private static readonly HttpClientHandler downloadHandler = new()
+        {
+            UseProxy = false,
+            UseCookies = false
+        };
+
+        private static readonly HttpClient updateDownloadClient = new(downloadHandler);
+
+        private bool isDownloading;
+
         public FormProgress()
         {
             InitializeComponent();
         }
-
-        private int DownloadProgress = 0;
-        private string DownloadStatus = "";
 
         private void FormProgress_Load(object sender, EventArgs e)
         {
             Text = Localization.ProcessingText;
             label_log1.Text = Localization.InitializingText;
             label_Progress.Text = string.Empty;
-            //label_log3.Text = string.Empty;
             timer_interval.Interval = 3000;
-            progressBar_MainProgress.Value = 0;
+            progressBar_MainProgress.Style = ProgressBarStyle.Blocks;
             progressBar_MainProgress.Minimum = 0;
-            progressBar_MainProgress.Maximum = ProgressMax;
+            progressBar_MainProgress.Maximum = Math.Max(1, ProgressMax);
+            progressBar_MainProgress.Value = 0;
 
             RunTask();
         }
 
         private async void RunTask()
         {
-            switch (ProgressType)
+            Result = false;
+
+            try
             {
-                case 0: // Update
-                    {
-                        label_Progress.Text = Localization.ProcessingText;
-                        cts = new CancellationTokenSource();
-                        var cT = cts.Token;
-                        var p = new Progress<int>(UpdateProgress);
-
-                        Result = await Task.Run(() => Download_DoWork(p, cT));
-                    }
-                    break;
-                default:
-                    {
-                        label_Progress.Text = Localization.ProcessUnknownText;
-                    }
-                    break;
-            }
-            timer_interval.Enabled = true;
-        }
-
-        private bool Download_DoWork(IProgress<int> p, CancellationToken cToken)
-        {
-            if (downloadClient == null)
-            {
-#pragma warning disable SYSLIB0014 // 型またはメンバーが旧型式です
-                downloadClient = new System.Net.WebClient();
-#pragma warning restore SYSLIB0014 // 型またはメンバーが旧型式です
-                downloadClient.DownloadProgressChanged += new System.Net.DownloadProgressChangedEventHandler(DownloadClient_DownloadProgressChanged);
-                downloadClient.DownloadFileCompleted += new AsyncCompletedEventHandler(DownloadClient_DownloadFileCompleted);
-            }
-
-            Invoke(new Action(() => Text = Localization.FormDownloadingCaption));
-            var task = Download(cToken);
-
-            while (task.IsCompleted != true)
-            {
-                if (task.Result == false)
+                switch (ProgressType)
                 {
-                    return false;
+                    case 0:
+                    case 7:
+                        label_Progress.Text = Localization.ProcessingText;
+                        cts?.Dispose();
+                        cts = new CancellationTokenSource();
+                        Result = await DownloadUpdatePackageAsync(cts.Token);
+                        break;
+                    default:
+                        label_Progress.Text = Localization.ProcessUnknownText;
+                        break;
                 }
             }
-            if (cToken.IsCancellationRequested == true)
+            catch (OperationCanceledException)
             {
-                return false;
+                Result = false;
+                label_Progress.Text = Localization.CancelledCaption;
             }
-            else
+            catch (Exception ex)
             {
-                Invoke(new Action(() => Text = Localization.ProcessingText));
-                Invoke(new Action(() => label_Progress.Text = Localization.ProcessingText));
-                Invoke(new Action(() => button_Abort.Enabled = false));
+                Result = false;
+                label_Progress.Text = Localization.ErrorCaption;
+                label_log1.Text = string.Format(Localization.UnExpectedErrorCaption, ex.Message);
             }
+            finally
+            {
+                isDownloading = false;
+                button_Abort.Enabled = false;
+                timer_interval.Enabled = true;
+            }
+        }
+
+        private async Task<bool> DownloadUpdatePackageAsync(CancellationToken cancellationToken)
+        {
+            Text = Localization.FormDownloadingCaption;
+            label_Progress.Text = Localization.ProcessingText;
+            label_log1.Text = Localization.InitializingText;
+            button_Abort.Enabled = true;
+            isDownloading = true;
+
+            string destinationPath = Path.Combine(
+                Directory.GetCurrentDirectory(),
+                "res",
+                "btplayer.zip");
+
+            var progress = new Progress<DownloadProgressInfo>(UpdateDownloadProgress);
+
+            await Common.Network.DownloadFileWithProgressAsync(
+                updateDownloadClient,
+                GetUpdatePackageUri(),
+                destinationPath,
+                progress,
+                cancellationToken);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            Text = Localization.ProcessingText;
+            label_Progress.Text = Localization.ProcessingText;
+            button_Abort.Enabled = false;
+            isDownloading = false;
 
             return true;
         }
 
-        private async Task<bool> Download(CancellationToken cToken)
+        private static Uri GetUpdatePackageUri()
         {
-            Uri uri;
-
-            switch (ApplicationPortable)
+            if (string.IsNullOrWhiteSpace(GitHubLatestVersion))
             {
-                case false:
-                    {
-                        uri = new("https://github.com/XyLe-GBP/btplayer/releases/download/" + GitHubLatestVersion + "/btplayer-release.zip");
-                    }
-                    break;
-                case true:
-                    {
-                        uri = new("https://github.com/XyLe-GBP/btplayer/releases/download/" + GitHubLatestVersion + "/btplayer-portable.zip");
-                    }
-                    break;
+                throw new InvalidOperationException("GitHubLatestVersion is empty.");
             }
 
-            switch (ApplicationPortable)
-            {
-                case false: // release
-                    {
-                        downloadClient.DownloadFileAsync(uri, Directory.GetCurrentDirectory() + @"\res\btplayer.zip");
-                    }
-                    break;
-                case true: // portable
-                    {
-                        downloadClient.DownloadFileAsync(uri, Directory.GetCurrentDirectory() + @"\res\btplayer.zip");
-                    }
-                    break;
-            }
-            IsDownloading = true;
+            string packageName = ApplicationPortable
+                ? "btplayer-portable.zip"
+                : "btplayer-release.zip";
 
-            while (downloadClient.IsBusy)
-            {
-                if (cToken.IsCancellationRequested == true)
-                {
-                    return await Task.FromResult(false);
-                }
-                Invoke(new Action(() => progressBar_MainProgress.Value = DownloadProgress));
-                Invoke(new Action(() => label_log1.Text = DownloadStatus));
-            }
-            return await Task.FromResult(true);
+            return Common.Network.GetUri(
+                "https://github.com/XyLe-GBP/btplayer/releases/download/" +
+                GitHubLatestVersion +
+                "/" +
+                packageName);
         }
 
-        private void DownloadClient_DownloadProgressChanged(object sender, System.Net.DownloadProgressChangedEventArgs e)
+        private void UpdateDownloadProgress(DownloadProgressInfo progress)
         {
-            if (IsDownloading == true)
-            {
-                progressBar_MainProgress.Maximum = 100;
-                IsDownloading = false;
-            }
-            DownloadProgress = e.ProgressPercentage;
-            DownloadStatus = string.Format(Localization.DownloadingCaption, e.ProgressPercentage, e.TotalBytesToReceive / 1024, e.BytesReceived / 1024);
-        }
+            progressBar_MainProgress.Maximum = 100;
+            progressBar_MainProgress.Value = Math.Clamp(
+                progress.ProgressPercentage,
+                progressBar_MainProgress.Minimum,
+                progressBar_MainProgress.Maximum);
 
-        private void DownloadClient_DownloadFileCompleted(object? sender, AsyncCompletedEventArgs e)
-        {
-            if (e.Cancelled) // Cancelled
+            long receivedKiB = progress.BytesReceived / 1024;
+
+            if (progress.TotalBytesToReceive is long totalBytes)
             {
-                downloadClient!.Dispose();
-            }
-            else if (e.Error != null) // Error
-            {
-                downloadClient!.Dispose();
+                long totalKiB = totalBytes / 1024;
+                label_log1.Text = string.Format(Localization.DownloadingCaption, receivedKiB, totalKiB);
             }
             else
             {
-                downloadClient!.Dispose();
-            }
-        }
-
-        private void UpdateProgress(int p)
-        {
-            switch (ProgressType)
-            {
-                default:
-                    progressBar_MainProgress.Value = p;
-                    label_log1.Text = string.Format(Localization.ProgressText, p, Count);
-                    break;
+                label_log1.Text = receivedKiB + " KiB";
             }
         }
 
@@ -186,28 +154,28 @@ namespace BTPlayer
 
         private void button_Abort_Click(object sender, EventArgs e)
         {
-            if (cts != null)
+            if (cts == null || cts.IsCancellationRequested)
             {
-                if (downloadClient.IsBusy)
+                return;
+            }
+
+            if (isDownloading)
+            {
+                DialogResult dialogResult = MessageBox.Show(
+                    Localization.DownloadAbortConfirmCaption,
+                    Localization.WarningCaption,
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning);
+
+                if (dialogResult != DialogResult.Yes)
                 {
-                    DialogResult dr = System.Windows.Forms.MessageBox.Show(Localization.DownloadAbortConfirmCaption, Localization.WarningCaption, MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
-                    if (dr == DialogResult.Yes)
-                    {
-                        cts.Cancel();
-                        downloadClient.CancelAsync();
-                        Close();
-                    }
-                    else
-                    {
-                        return;
-                    }
-                }
-                else
-                {
-                    cancel.Cancel();
-                    Close();
+                    return;
                 }
             }
+
+            cts.Cancel();
+            button_Abort.Enabled = false;
+            label_Progress.Text = Localization.CancelledCaption;
         }
     }
 }
