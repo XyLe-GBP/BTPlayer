@@ -9,8 +9,10 @@
     <ApplicationIcon>Properties\BTPlayer.ico</ApplicationIcon>
     <UseWPF>True</UseWPF>
     <PackageIcon>BTPlayer_icon.png</PackageIcon>
-    <AssemblyVersion>1.1.2620.703</AssemblyVersion>
-    <FileVersion>1.1.2620.703</FileVersion>
+    <AssemblyVersion>1.2.2620.709</AssemblyVersion>
+    <FileVersion>1.2.2620.709</FileVersion>
+    <Company>XyLe</Company>
+    <Copyright>Copyright © 2026 XyLe. All Rights Reserved.</Copyright>
   </PropertyGroup>
 
   <ItemGroup>
