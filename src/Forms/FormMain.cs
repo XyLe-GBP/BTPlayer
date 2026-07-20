@@ -3,6 +3,7 @@ using System.IO;
 using System.Net.Http;
 using System.Net.NetworkInformation;
 using System.Runtime;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
 using Windows.Devices.Enumeration;
@@ -44,9 +45,18 @@ namespace BTPlayer
             TimeSpan.FromSeconds(5),
             TimeSpan.FromSeconds(10)
         ];
+        private static readonly TimeSpan[] TransientClosedRecoveryDelays =
+        [
+            TimeSpan.FromMilliseconds(180),
+            TimeSpan.FromMilliseconds(650),
+            TimeSpan.FromSeconds(1.5),
+            TimeSpan.FromSeconds(3)
+        ];
         private static readonly TimeSpan CompatibilityReopenDelay = TimeSpan.FromSeconds(2);
         private static readonly TimeSpan CompatibilityRestartPause = TimeSpan.FromMilliseconds(900);
         private static readonly TimeSpan CompatibilityStartSettleDelay = TimeSpan.FromMilliseconds(350);
+        private const uint PlaybackTimerResolutionMs = 1;
+        private const int WmAppCommand = 0x0319;
 
         private DeviceWatcher? deviceWatcher;
         private readonly Dictionary<string, DeviceInformation> devices = new();
@@ -54,10 +64,15 @@ namespace BTPlayer
         private readonly Dictionary<string, CancellationTokenSource> pendingCloseConfirmations = new();
         private readonly Dictionary<string, CancellationTokenSource> pendingOpenWarmupRefreshes = new();
         private readonly Dictionary<string, CancellationTokenSource> pendingCompatibilityReopens = new();
+        private readonly Dictionary<string, CancellationTokenSource> pendingTransientOpenRefreshes = new();
         private readonly SemaphoreSlim audioConnectionLock = new(1, 1);
 
         private ProcessPriorityClass? originalPriorityClass;
+        private ThreadPriority? originalThreadPriority;
         private GCLatencyMode? originalGcLatencyMode;
+        private nint avrtTaskHandle;
+        private uint avrtTaskIndex;
+        private bool playbackTimerResolutionApplied;
         private string? currentOpenedDeviceId;
         private string? lastSelectedDeviceId;
         private string? pendingRestoreDeviceId;
@@ -82,6 +97,30 @@ namespace BTPlayer
 
         private Font? normalListFont;
         private Font? boldListFont;
+
+        private enum AvrtPriority
+        {
+            VeryLow = -2,
+            Low = -1,
+            Normal = 0,
+            High = 1,
+            Critical = 2
+        }
+
+        [DllImport("winmm.dll")]
+        private static extern uint timeBeginPeriod(uint uPeriod);
+
+        [DllImport("winmm.dll")]
+        private static extern uint timeEndPeriod(uint uPeriod);
+
+        [DllImport("avrt.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern nint AvSetMmThreadCharacteristics(string taskName, out uint taskIndex);
+
+        [DllImport("avrt.dll", SetLastError = true)]
+        private static extern bool AvRevertMmThreadCharacteristics(nint avrtHandle);
+
+        [DllImport("avrt.dll", SetLastError = true)]
+        private static extern bool AvSetMmThreadPriority(nint avrtHandle, AvrtPriority priority);
 
         public FormMain()
         {
@@ -128,6 +167,7 @@ namespace BTPlayer
 
             InitializeDeviceGrid();
             InitializeTrayIcon();
+            InitializePlaybackInputGuard();
             LoadLastSelectedDevice();
             LoadAppSettings();
 
@@ -196,6 +236,14 @@ namespace BTPlayer
             }
 
             pendingCompatibilityReopens.Clear();
+
+            foreach (var transientOpenRefresh in pendingTransientOpenRefreshes.Values)
+            {
+                transientOpenRefresh.Cancel();
+                transientOpenRefresh.Dispose();
+            }
+
+            pendingTransientOpenRefreshes.Clear();
 
             foreach (var pair in audioPlaybackConnections)
             {
@@ -459,6 +507,59 @@ namespace BTPlayer
             }
         }
 
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (ShouldSuppressPlaybackNavigationInput(keyData))
+            {
+                return true;
+            }
+
+            return base.ProcessCmdKey(ref msg, keyData);
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WmAppCommand && !string.IsNullOrWhiteSpace(currentOpenedDeviceId))
+            {
+                return;
+            }
+
+            base.WndProc(ref m);
+        }
+
+        private bool ShouldSuppressPlaybackNavigationInput(Keys keyData)
+        {
+            if (string.IsNullOrWhiteSpace(currentOpenedDeviceId))
+            {
+                return false;
+            }
+
+            if ((keyData & (Keys.Control | Keys.Alt)) != Keys.None)
+            {
+                return false;
+            }
+
+            Keys keyCode = keyData & Keys.KeyCode;
+            return keyCode is Keys.Enter
+                or Keys.Return
+                or Keys.Space
+                or Keys.Escape
+                or Keys.Up
+                or Keys.Down
+                or Keys.Left
+                or Keys.Right
+                or Keys.Tab
+                or Keys.PageUp
+                or Keys.PageDown
+                or Keys.Home
+                or Keys.End
+                or Keys.Select
+                or Keys.MediaPlayPause
+                or Keys.MediaNextTrack
+                or Keys.MediaPreviousTrack
+                or Keys.MediaStop;
+        }
+
         private static Bitmap CreateStatusIcon(Color color)
         {
             const int size = 48;
@@ -493,6 +594,7 @@ namespace BTPlayer
         {
             dataGridView_Device.AutoGenerateColumns = false;
             dataGridView_Device.Columns.Clear();
+            dataGridView_Device.TabStop = false;
 
             dataGridView_Device.MultiSelect = false;
             dataGridView_Device.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
@@ -557,6 +659,33 @@ namespace BTPlayer
 
             dataGridView_Device.Columns.AddRange(colIcon, colName, colState, colId);
             AdjustDeviceGridColumnWidths();
+        }
+
+        private void InitializePlaybackInputGuard()
+        {
+            KeyPreview = true;
+            button_Connect.TabStop = false;
+            button_Open.TabStop = false;
+            textBox_Log.TabStop = false;
+            toolStrip_Main.TabStop = false;
+        }
+
+        private void RemovePlaybackControlFocus()
+        {
+            if (InvokeRequired)
+            {
+                BeginInvoke(new Action(RemovePlaybackControlFocus));
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(currentOpenedDeviceId))
+            {
+                return;
+            }
+
+            ActiveControl = null;
+            button_Connect.NotifyDefault(false);
+            button_Open.NotifyDefault(false);
         }
 
         /// <summary>
@@ -1012,7 +1141,7 @@ namespace BTPlayer
 
             string? selectedId = GetSelectedDeviceId();
 
-            if (!suppressSelectionPersistence)
+            if (!suppressSelectionPersistence && audioPlaybackConnections.Count == 0)
             {
                 lastSelectedDeviceId = selectedId ?? lastSelectedDeviceId;
                 SaveLastSelectedDevice();
@@ -1369,6 +1498,8 @@ namespace BTPlayer
 
                 if (result.Status == AudioPlaybackConnectionOpenResultStatus.Success)
                 {
+                    CancelTransientOpenRefreshes(selectedDeviceId);
+
                     // 他のデバイスが誤って Connected 表示のまま残らないように整理
                     ClearOtherConnectedStates(selectedDeviceId);
 
@@ -1376,9 +1507,14 @@ namespace BTPlayer
                     ApplyPlaybackRuntimeSettings();
                     SetConnectionState(Localization.ConnectionConnectCaption);
                     SetDeviceRowState(selectedDeviceId, Localization.ConnectionConnectCaption);
+                    RemovePlaybackControlFocus();
                     ResetInactiveFailureStates();
                     Log("Open succeeded: " + GetDeviceDisplayName(selectedDeviceId));
-                    ScheduleInitialOpenWarmupRefreshes(selectedDeviceId, selectedConnection, forceWarmupRefreshes);
+                    ScheduleInitialOpenWarmupRefreshes(
+                        selectedDeviceId,
+                        selectedConnection,
+                        forceWarmupRefreshes || ShouldUseCompatibilityOpenRefresh(selectedDeviceId));
+
                     if (allowCompatibilityReopen)
                     {
                         ScheduleCompatibilityReopenIfNeeded(selectedDeviceId, selectedConnection);
@@ -1392,6 +1528,7 @@ namespace BTPlayer
                     CancelPendingCloseConfirmation(selectedDeviceId);
                     CancelOpenWarmupRefreshes(selectedDeviceId);
                     CancelCompatibilityReopen(selectedDeviceId);
+                    CancelTransientOpenRefreshes(selectedDeviceId);
                     selectedConnection.StateChanged -= AudioPlaybackConnection_ConnectionStateChanged;
                     DisposePlaybackConnection(selectedConnection, GetUiText("Open failed", "Open失敗"));
                     audioPlaybackConnections.Remove(selectedDeviceId);
@@ -1414,6 +1551,7 @@ namespace BTPlayer
                     CancelPendingCloseConfirmation(selectedDeviceId);
                     CancelOpenWarmupRefreshes(selectedDeviceId);
                     CancelCompatibilityReopen(selectedDeviceId);
+                    CancelTransientOpenRefreshes(selectedDeviceId);
                     selectedConnection.StateChanged -= AudioPlaybackConnection_ConnectionStateChanged;
                     DisposePlaybackConnection(selectedConnection, GetUiText("Open failed", "Open失敗"));
                     audioPlaybackConnections.Remove(selectedDeviceId);
@@ -1575,6 +1713,7 @@ namespace BTPlayer
                     CancelPendingCloseConfirmation(selectedDeviceId);
                     CancelOpenWarmupRefreshes(selectedDeviceId);
                     CancelCompatibilityReopen(selectedDeviceId);
+                    CancelTransientOpenRefreshes(selectedDeviceId);
                     selectedConnection.StateChanged -= AudioPlaybackConnection_ConnectionStateChanged;
                     DisposePlaybackConnection(selectedConnection, GetUiText("Disconnect", "切断"));
                     audioPlaybackConnections.Remove(selectedDeviceId);
@@ -1737,6 +1876,7 @@ namespace BTPlayer
             {
                 connection.StateChanged -= AudioPlaybackConnection_ConnectionStateChanged;
                 CancelCompatibilityReopen(update.Id);
+                CancelTransientOpenRefreshes(update.Id);
                 DisposePlaybackConnection(connection, GetUiText("Device removed", "デバイス削除"));
                 audioPlaybackConnections.Remove(update.Id);
             }
@@ -1785,6 +1925,7 @@ namespace BTPlayer
                 if (matchedDeviceId != null)
                 {
                     bool recoveredFromPendingClose = CancelPendingCloseConfirmation(matchedDeviceId);
+                    CancelTransientOpenRefreshes(matchedDeviceId);
 
                     if (recoveredFromPendingClose && currentOpenedDeviceId == matchedDeviceId)
                     {
@@ -1796,6 +1937,7 @@ namespace BTPlayer
                     currentOpenedDeviceId = matchedDeviceId;
                     ApplyPlaybackRuntimeSettings();
                     SetDeviceRowState(matchedDeviceId, Localization.ConnectionConnectCaption);
+                    RemovePlaybackControlFocus();
                     Log("State changed: Connected - " + GetDeviceDisplayName(matchedDeviceId));
                 }
 
@@ -1805,6 +1947,11 @@ namespace BTPlayer
             {
                 if (matchedDeviceId != null)
                 {
+                    if (currentOpenedDeviceId == matchedDeviceId)
+                    {
+                        ScheduleTransientOpenRefreshes(sender, matchedDeviceId);
+                    }
+
                     ScheduleCloseConfirmation(sender, matchedDeviceId);
                     return;
                 }
@@ -1908,6 +2055,7 @@ namespace BTPlayer
             connection.StateChanged -= AudioPlaybackConnection_ConnectionStateChanged;
             CancelOpenWarmupRefreshes(deviceId);
             CancelCompatibilityReopen(deviceId);
+            CancelTransientOpenRefreshes(deviceId);
             audioPlaybackConnections.Remove(deviceId);
             DisposePlaybackConnection(connection, GetUiText("Confirmed close", "切断確認"));
 
@@ -1940,6 +2088,93 @@ namespace BTPlayer
             cancellation.Cancel();
             cancellation.Dispose();
             return true;
+        }
+
+        private void ScheduleTransientOpenRefreshes(
+            AudioPlaybackConnection connection,
+            string deviceId)
+        {
+            if (pendingTransientOpenRefreshes.ContainsKey(deviceId))
+            {
+                return;
+            }
+
+            var cancellation = new CancellationTokenSource();
+            pendingTransientOpenRefreshes[deviceId] = cancellation;
+            _ = RefreshOpenAfterTransientCloseAsync(connection, deviceId, cancellation);
+        }
+
+        private async Task RefreshOpenAfterTransientCloseAsync(
+            AudioPlaybackConnection connection,
+            string deviceId,
+            CancellationTokenSource cancellation)
+        {
+            CancellationToken token = cancellation.Token;
+
+            try
+            {
+                foreach (TimeSpan delay in TransientClosedRecoveryDelays)
+                {
+                    await Task.Delay(delay, token);
+                    await audioConnectionLock.WaitAsync(token);
+
+                    try
+                    {
+                        if (IsDisposed ||
+                            currentOpenedDeviceId != deviceId ||
+                            !audioPlaybackConnections.TryGetValue(deviceId, out var currentConnection) ||
+                            !ReferenceEquals(currentConnection, connection))
+                        {
+                            return;
+                        }
+
+                        if (connection.State == AudioPlaybackConnectionState.Opened)
+                        {
+                            return;
+                        }
+
+                        var result = await connection.OpenAsync();
+                        if (result.Status == AudioPlaybackConnectionOpenResultStatus.Success)
+                        {
+                            Log("Transient audio recovery succeeded: " + GetDeviceDisplayName(deviceId));
+                            return;
+                        }
+
+                        Log("Transient audio recovery retry: " + result.Status + " - " + GetDeviceDisplayName(deviceId));
+                    }
+                    finally
+                    {
+                        audioConnectionLock.Release();
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                Log("Transient audio recovery failed: " + ex.Message);
+            }
+            finally
+            {
+                if (pendingTransientOpenRefreshes.TryGetValue(deviceId, out var currentCancellation) &&
+                    ReferenceEquals(currentCancellation, cancellation))
+                {
+                    pendingTransientOpenRefreshes.Remove(deviceId);
+                    cancellation.Dispose();
+                }
+            }
+        }
+
+        private void CancelTransientOpenRefreshes(string deviceId)
+        {
+            if (!pendingTransientOpenRefreshes.Remove(deviceId, out var cancellation))
+            {
+                return;
+            }
+
+            cancellation.Cancel();
+            cancellation.Dispose();
         }
 
         private void ScheduleInitialOpenWarmupRefreshes(
@@ -2025,7 +2260,7 @@ namespace BTPlayer
 
         private void ScheduleCompatibilityReopenIfNeeded(string deviceId, AudioPlaybackConnection connection)
         {
-            if (!ShouldUseCompatibilityReopen(deviceId))
+            if (!ShouldUseHardCompatibilityReopen(deviceId))
             {
                 return;
             }
@@ -2037,14 +2272,52 @@ namespace BTPlayer
             _ = ReopenForCompatibilityAfterDelayAsync(deviceId, connection, cancellation);
         }
 
-        private bool ShouldUseCompatibilityReopen(string deviceId)
+        private bool ShouldUseCompatibilityOpenRefresh(string deviceId)
         {
+            string deviceName = GetDeviceDisplayName(deviceId);
+
             if (compatibilityReopenOnOpen)
             {
                 return true;
             }
 
+            return IsAppleCompatibilityDeviceName(deviceName) ||
+                   IsHardCompatibilityDeviceName(deviceName);
+        }
+
+        private bool ShouldUseHardCompatibilityReopen(string deviceId)
+        {
             string deviceName = GetDeviceDisplayName(deviceId);
+
+            if (IsAppleCompatibilityDeviceName(deviceName))
+            {
+                return false;
+            }
+
+            return compatibilityReopenOnOpen ||
+                   IsHardCompatibilityDeviceName(deviceName);
+        }
+
+        private static bool IsAppleCompatibilityDeviceName(string deviceName)
+        {
+            if (string.IsNullOrWhiteSpace(deviceName))
+            {
+                return false;
+            }
+
+            return deviceName.Contains("iPhone", StringComparison.OrdinalIgnoreCase) ||
+                   deviceName.Contains("iPad", StringComparison.OrdinalIgnoreCase) ||
+                   deviceName.Contains("iPod", StringComparison.OrdinalIgnoreCase) ||
+                   deviceName.Contains("iOS", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsHardCompatibilityDeviceName(string deviceName)
+        {
+            if (string.IsNullOrWhiteSpace(deviceName))
+            {
+                return false;
+            }
+
             return deviceName.Contains("XDP-20", StringComparison.OrdinalIgnoreCase) ||
                    deviceName.Contains("XDP", StringComparison.OrdinalIgnoreCase) ||
                    deviceName.Contains("DP-X", StringComparison.OrdinalIgnoreCase) ||
@@ -2125,6 +2398,7 @@ namespace BTPlayer
 
                 CancelPendingCloseConfirmation(deviceId);
                 CancelOpenWarmupRefreshes(deviceId);
+                CancelTransientOpenRefreshes(deviceId);
 
                 if (cancelPendingCompatibilityReopen)
                 {
@@ -2274,14 +2548,31 @@ namespace BTPlayer
 
                 if (currentProcess.PriorityClass is ProcessPriorityClass.Idle
                     or ProcessPriorityClass.BelowNormal
-                    or ProcessPriorityClass.Normal)
+                    or ProcessPriorityClass.Normal
+                    or ProcessPriorityClass.AboveNormal)
                 {
-                    currentProcess.PriorityClass = ProcessPriorityClass.AboveNormal;
+                    currentProcess.PriorityClass = ProcessPriorityClass.High;
                 }
             }
             catch (Exception ex)
             {
                 Log("Failed to apply playback process priority: " + ex.Message);
+            }
+
+            try
+            {
+                originalThreadPriority ??= Thread.CurrentThread.Priority;
+
+                if (Thread.CurrentThread.Priority is ThreadPriority.Lowest
+                    or ThreadPriority.BelowNormal
+                    or ThreadPriority.Normal)
+                {
+                    Thread.CurrentThread.Priority = ThreadPriority.AboveNormal;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log("Failed to apply playback thread priority: " + ex.Message);
             }
 
             try
@@ -2296,6 +2587,34 @@ namespace BTPlayer
             catch (Exception ex)
             {
                 Log("Failed to apply playback GC latency mode: " + ex.Message);
+            }
+
+            try
+            {
+                if (!playbackTimerResolutionApplied && timeBeginPeriod(PlaybackTimerResolutionMs) == 0)
+                {
+                    playbackTimerResolutionApplied = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log("Failed to apply playback timer resolution: " + ex.Message);
+            }
+
+            try
+            {
+                if (avrtTaskHandle == 0)
+                {
+                    avrtTaskHandle = AvSetMmThreadCharacteristics("Audio", out avrtTaskIndex);
+                    if (avrtTaskHandle != 0)
+                    {
+                        AvSetMmThreadPriority(avrtTaskHandle, AvrtPriority.High);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log("Failed to apply playback MMCSS settings: " + ex.Message);
             }
         }
 
@@ -2326,6 +2645,19 @@ namespace BTPlayer
 
             try
             {
+                if (originalThreadPriority.HasValue)
+                {
+                    Thread.CurrentThread.Priority = originalThreadPriority.Value;
+                    originalThreadPriority = null;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log("Failed to restore thread priority: " + ex.Message);
+            }
+
+            try
+            {
                 if (originalGcLatencyMode.HasValue)
                 {
                     GCSettings.LatencyMode = originalGcLatencyMode.Value;
@@ -2335,6 +2667,33 @@ namespace BTPlayer
             catch (Exception ex)
             {
                 Log("Failed to restore GC latency mode: " + ex.Message);
+            }
+
+            try
+            {
+                if (playbackTimerResolutionApplied)
+                {
+                    timeEndPeriod(PlaybackTimerResolutionMs);
+                    playbackTimerResolutionApplied = false;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log("Failed to restore timer resolution: " + ex.Message);
+            }
+
+            try
+            {
+                if (avrtTaskHandle != 0)
+                {
+                    AvRevertMmThreadCharacteristics(avrtTaskHandle);
+                    avrtTaskHandle = 0;
+                    avrtTaskIndex = 0;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log("Failed to restore MMCSS settings: " + ex.Message);
             }
         }
 

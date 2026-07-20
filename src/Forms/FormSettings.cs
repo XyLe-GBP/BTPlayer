@@ -42,8 +42,8 @@ namespace BTPlayer
                 Location = new Point(18, 54),
                 Size = new Size(430, 30),
                 Text = GetUiText(
-                    "Use DAP compatibility resync after audio open",
-                    "音声Open後にDAP向け互換再同期を行う"),
+                    "Use compatibility correction after audio open",
+                    "音声Open後に互換補正を行う"),
                 UseVisualStyleBackColor = true
             };
 
